@@ -1,0 +1,53 @@
+# Xcode
+.DS_Store
+build/
+DerivedData/
+*.xcuserstate
+*.xcscmblueprint
+*.xccheckout
+*.xcworkspace/xcuserdata/
+*.xcworkspace/contents.xcworkspacedata
+*.xcworkspace/xcshareddata/WorkspaceSettings.xcsettings
+*.moved-aside
+*.xcuserdatad
+*.mode1v3
+*.mode2v3
+*.perspectivev3
+
+# Swift Package Manager
+.build/
+.swiftpm/
+Package.resolved
+
+# CocoaPods
+Pods/
+Podfile.lock
+
+# Carthage
+Carthage/Build/
+
+# Fastlane
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots/**/*.png
+fastlane/test_output/
+
+# Xcode Server / Continuous Integration
+xcshareddata/WorkspaceSettings.xcsettings
+
+# User-specific data
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Temporary files
+*.swp
+*.lock
+*.tmp
+*.orig
+
+# macOS system files
+Icon?
+ehthumbs.db
+Thumbs.db
