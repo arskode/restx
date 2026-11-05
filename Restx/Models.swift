@@ -82,6 +82,13 @@ struct HTTPHeader: Identifiable, Equatable, Hashable, Codable {
 }
 
 struct HTTPResponse: Identifiable, Hashable {
+    /// Caches the decoded/pretty-printed body so rendering the response view does not
+    /// re-run `JSONSerialization` on every SwiftUI update.
+    private final class TextCache {
+        var raw: String?
+        var pretty: String?
+    }
+    
     let id: UUID = UUID()
     let statusCode: Int
     let headers: [HTTPHeader]
@@ -90,24 +97,68 @@ struct HTTPResponse: Identifiable, Hashable {
     let size: Int
     let error: String?
     
+    private let textCache = TextCache()
+    
     func isJSON() -> Bool {
         return self.headers.contains(where: { $0.key.lowercased() == "content-type" && $0.value.lowercased().contains("application/json") })
     }
     
     func body(format: ResponseFormat = .pretty) -> String {
-        if format == .pretty {
-            if self.isJSON() {
-                do {
-                    let object = try JSONSerialization.jsonObject(with: self.body, options: [])
-                    let prettyData = try JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .withoutEscapingSlashes, .fragmentsAllowed, .sortedKeys])
-                    return String(data: prettyData, encoding: .utf8)!
-                } catch {
-                    return String(data: self.body, encoding: .utf8)!
-                }
+        switch format {
+        case .raw:
+            return rawText
+        case .pretty:
+            if let pretty = textCache.pretty {
+                return pretty
             }
+            let pretty: String
+            if isJSON(), let formatted = Self.prettyPrinted(rawText) {
+                pretty = formatted
+            } else {
+                pretty = rawText
+            }
+            textCache.pretty = pretty
+            return pretty
         }
-        
-        return String(data: self.body, encoding: .utf8)!
+    }
+    
+    private var rawText: String {
+        if let raw = textCache.raw {
+            return raw
+        }
+        // `String(decoding:as:)` replaces malformed sequences instead of trapping,
+        // unlike `String(data:encoding:)!`.
+        let raw = String(decoding: body, as: UTF8.self)
+        textCache.raw = raw
+        return raw
+    }
+    
+    private static func prettyPrinted(_ text: String) -> String? {
+        guard let data = text.data(using: .utf8) else { return nil }
+        guard let object = try? JSONSerialization.jsonObject(with: data, options: [.fragmentsAllowed]) else {
+            return nil
+        }
+        guard let prettyData = try? JSONSerialization.data(
+            withJSONObject: object,
+            options: [.prettyPrinted, .withoutEscapingSlashes, .fragmentsAllowed, .sortedKeys]
+        ) else {
+            return nil
+        }
+        return String(data: prettyData, encoding: .utf8)
+    }
+    
+    static func == (lhs: HTTPResponse, rhs: HTTPResponse) -> Bool {
+        lhs.id == rhs.id
+            && lhs.statusCode == rhs.statusCode
+            && lhs.headers == rhs.headers
+            && lhs.body == rhs.body
+            && lhs.responseTime == rhs.responseTime
+            && lhs.size == rhs.size
+            && lhs.error == rhs.error
+    }
+    
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
     }
 }
 
@@ -115,7 +166,8 @@ struct HTTPRequest: Identifiable, Hashable, Codable {
     let id: UUID
     var name: String
     var method: HTTPMethod
-    var url: URL
+    /// Stored as text so partially-typed URLs do not need to be valid `URL` values.
+    var url: String
     var headers: [HTTPHeader]
     var body: String
     var response: HTTPResponse?
@@ -123,7 +175,7 @@ struct HTTPRequest: Identifiable, Hashable, Codable {
     var formData: [FormDataField]
     var task: Task<Void, Never>?
     
-    init(name: String, method: HTTPMethod, url: URL, headers: [HTTPHeader] = [], body: String = "", bodyType: RequestType = .json, formData: [FormDataField] = []) {
+    init(name: String, method: HTTPMethod, url: String, headers: [HTTPHeader] = [], body: String = "", bodyType: RequestType = .json, formData: [FormDataField] = []) {
         self.id = UUID()
         self.name = name
         self.method = method
@@ -132,6 +184,18 @@ struct HTTPRequest: Identifiable, Hashable, Codable {
         self.body = body
         self.bodyType = bodyType
         self.formData = formData
+    }
+    
+    init(name: String, method: HTTPMethod, url: URL, headers: [HTTPHeader] = [], body: String = "", bodyType: RequestType = .json, formData: [FormDataField] = []) {
+        self.init(
+            name: name,
+            method: method,
+            url: url.absoluteString,
+            headers: headers,
+            body: body,
+            bodyType: bodyType,
+            formData: formData
+        )
     }
     
     func formatBody() -> String {

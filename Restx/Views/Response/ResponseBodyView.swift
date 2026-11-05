@@ -49,14 +49,13 @@ struct ResponseBodyView: View {
                 .padding(.horizontal, 4)
                 .scrollIndicators(.hidden)
             } else {
-                TextEditor(text: .constant(response.body(format: responseFormat)))
-                    .textContentType(nil)
-                    .font(config.editorFont)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-                    .textSelection(.enabled)
-                    .scrollContentBackground(.hidden)
-                    .background(.clear)
-                    .scrollContentBackground(.hidden)
+                ScrollView {
+                    Text(response.body(format: responseFormat))
+                        .font(config.editorFont)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .scrollIndicators(.hidden)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)

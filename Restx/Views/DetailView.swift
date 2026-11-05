@@ -34,7 +34,7 @@ struct DetailView: View {
                         TextField(
                             "URL",
                             text: Binding(
-                                get: { request.url.absoluteString },
+                                get: { request.url },
                                 set: { newValue in
                                     service.setRequestUrl(
                                         folderID: sidebarSelection.folderID,

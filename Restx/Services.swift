@@ -34,7 +34,7 @@ class Service: ObservableObject {
         let request = HTTPRequest(
             name: "HTTP Request",
             method: .GET,
-            url: URL(string: "https://httpbin.org/get")!,
+            url: "https://httpbin.org/get",
             headers: [ HTTPHeader(key: "Content-Type", value: "application/json")],
             body: ""
         )
@@ -51,6 +51,7 @@ class Service: ObservableObject {
     func deleteRequest(folderID: UUID, requestID: UUID) -> Void {
         if let folderIndex = requestFolders.firstIndex(where: { $0.id == folderID }) {
             if let requestIndex = requestFolders[folderIndex].requests.firstIndex(where: { $0.id == requestID }) {
+                requestFolders[folderIndex].requests[requestIndex].task?.cancel()
                 requestFolders[folderIndex].requests.remove(at: requestIndex)
                 scheduleSave()
             }
@@ -89,6 +90,10 @@ class Service: ObservableObject {
     
     @MainActor
     func deleteFolder(folderID: UUID) -> Void {
+        requestFolders
+            .first(where: { $0.id == folderID })?
+            .requests
+            .forEach { $0.task?.cancel() }
         requestFolders.removeAll(where: { $0.id == folderID })
         scheduleSave()
     }
@@ -132,7 +137,7 @@ class Service: ObservableObject {
     func setRequestUrl(folderID: UUID, requestID: UUID, url: String) -> Void {
         if let folderIndex = requestFolders.firstIndex(where: { $0.id == folderID }) {
             if let requestIndex = requestFolders[folderIndex].requests.firstIndex(where: { $0.id == requestID }) {
-                requestFolders[folderIndex].requests[requestIndex].url = URL(string: url)!
+                requestFolders[folderIndex].requests[requestIndex].url = url
                 scheduleSave()
             }
         }
@@ -232,9 +237,22 @@ class Service: ObservableObject {
                 let req = requestFolders[folderIndex].requests[requestIndex]
                 requestFolders[folderIndex].requests[requestIndex].response = nil
                 
+                let trimmedURL = req.url.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard let url = URL(string: trimmedURL), url.scheme != nil else {
+                    requestFolders[folderIndex].requests[requestIndex].response = HTTPResponse(
+                        statusCode: 0,
+                        headers: [],
+                        body: Data(),
+                        responseTime: 0,
+                        size: 0,
+                        error: "Invalid URL"
+                    )
+                    return
+                }
+                
                 let task = Task {
                     do {
-                        var request = URLRequest(url: req.url)
+                        var request = URLRequest(url: url)
                         request.httpMethod = req.method.rawValue
                         request.timeoutInterval = Config.shared.requestTimeout
                         for header in req.headers where header.isEnabled {
@@ -302,36 +320,59 @@ class Service: ObservableObject {
                         let (data, response) = try await URLSession.shared.data(for: request)
                         let responseTime = (CFAbsoluteTimeGetCurrent() - startTime) * 1000
                         
-                        let httpResponse = response as! HTTPURLResponse
+                        let httpResponse = response as? HTTPURLResponse
+                        guard let httpResponse else {
+                            throw URLError(.badServerResponse)
+                        }
                         let responseHeaders = httpResponse.allHeaderFields.compactMap { (key, value) -> HTTPHeader? in guard let k = key as? String, let v = value as? String else { return nil }
                             return HTTPHeader(key: k, value: v)
                         }
                         
-                        requestFolders[folderIndex].requests[requestIndex].response = HTTPResponse(
-                            statusCode: httpResponse.statusCode,
-                            headers: responseHeaders,
-                            body: data,
-                            responseTime: responseTime,
-                            size: data.count,
-                            error: nil
+                        apply(
+                            HTTPResponse(
+                                statusCode: httpResponse.statusCode,
+                                headers: responseHeaders,
+                                body: data,
+                                responseTime: responseTime,
+                                size: data.count,
+                                error: nil
+                            ),
+                            folderID: folderID,
+                            requestID: requestID
                         )
-                        requestFolders[folderIndex].requests[requestIndex].task = nil
                     } catch {
-                        let errorMessage = error.localizedDescription
-                        requestFolders[folderIndex].requests[requestIndex].response  = HTTPResponse(
-                            statusCode: 0,
-                            headers: [],
-                            body: Data(),
-                            responseTime: 0,
-                            size: 0,
-                            error: errorMessage
+                        // `cancelRequest` already replaced the response; don't overwrite
+                        // it with a generic cancellation error.
+                        guard !Task.isCancelled else { return }
+                        apply(
+                            HTTPResponse(
+                                statusCode: 0,
+                                headers: [],
+                                body: Data(),
+                                responseTime: 0,
+                                size: 0,
+                                error: error.localizedDescription
+                            ),
+                            folderID: folderID,
+                            requestID: requestID
                         )
-                        requestFolders[folderIndex].requests[requestIndex].task = nil
                     }
                 }
                 requestFolders[folderIndex].requests[requestIndex].task = task
             }
         }
+    }
+    
+    /// Applies a response by looking the request up again. Indices captured before
+    /// an `await` can be stale if the user reordered or deleted rows meanwhile.
+    @MainActor
+    private func apply(_ response: HTTPResponse, folderID: UUID, requestID: UUID) {
+        guard let folderIndex = requestFolders.firstIndex(where: { $0.id == folderID }),
+              let requestIndex = requestFolders[folderIndex].requests.firstIndex(where: { $0.id == requestID }) else {
+            return
+        }
+        requestFolders[folderIndex].requests[requestIndex].response = response
+        requestFolders[folderIndex].requests[requestIndex].task = nil
     }
     
     @MainActor
